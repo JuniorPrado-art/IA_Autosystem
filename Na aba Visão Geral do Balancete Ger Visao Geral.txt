@@ -1,0 +1,187 @@
+Na aba Visão Geral do Balancete Geral, o painel executa duas consultas SQL principais:
+
+1. OPÇÃO A — Recebimentos por Forma de Pagamento
+Essa consulta apura todas as entradas financeiras agrupadas por forma de pagamento (forma_pgto = true), incluindo as linhas de totais consolidados de cartões e convênios utilizados no painel.
+
+sql
+WITH dados_base AS (
+    SELECT 
+        m.grid,
+        m.valor,
+        mm.nome AS forma_pagamento,
+        -- Identificação da Categoria (Crédito vs Débito)
+        CASE 
+            WHEN t.operacao = 'CREDIT' THEN 'CREDITO'
+            WHEN t.operacao = 'DEBIT' THEN 'DEBITO'
+            WHEN mm.tipo_cartao = 0 THEN 'CREDITO'
+            WHEN mm.tipo_cartao = 1 THEN 'DEBITO'
+            WHEN UPPER(mm.nome) LIKE '%ELECTRON%' OR UPPER(mm.nome) LIKE '%DEBIT%' THEN 'DEBITO'
+            WHEN UPPER(mm.nome) LIKE '%CREDIT%' THEN 'CREDITO'
+            ELSE NULL
+        END AS categoria_cartao,
+        -- Identificação da Credenciadora RECECARD S/A (Código 025)
+        CASE 
+            -- Condição Principal: Tabela tef_credenciadora / tef_credenciadora_config (Código 025 ou Nome RECECARD/REDECARD)
+            WHEN mm.tef_credenciadora IN ('025', '25')
+              OR tc.codigo IN ('025', '25')
+              OR UPPER(COALESCE(tc.nome, '')) LIKE '%RECECARD%'
+              OR UPPER(COALESCE(tc.nome, '')) LIKE '%REDECARD%'
+              OR UPPER(mm.nome) LIKE '%RECECARD%'
+              OR UPPER(mm.nome) LIKE '%REDECARD%' THEN TRUE
+            -- Apoio Complementar: Tabela tef_transacao (operadora_nome)
+            WHEN UPPER(COALESCE(t.operadora_nome, '')) LIKE '%RECECARD%'
+              OR UPPER(COALESCE(t.operadora_nome, '')) LIKE '%REDECARD%' THEN TRUE
+            ELSE FALSE
+        END AS is_credenciadora_rececard,
+        -- Identificação Unificada de PIX e QR Linx (Tipo NF-e/NFC-e 20/21 - Estático/Dinâmico, Info Adicional 34/35 ou QR Linx)
+        CASE 
+            WHEN mm.tipo_nfce IN ('20', '21', '22')
+              OR CAST(mm.info_adic AS text) IN ('34', '35')
+              OR UPPER(mm.nome) LIKE '%QR LINX%'
+              OR UPPER(mm.nome) LIKE '%QRLINX%' THEN TRUE
+            ELSE FALSE
+        END AS is_credenciadora_pix_total,
+        -- Identificação se o movimento é cartão / TEF
+        CASE
+            WHEN t.operacao IN ('CREDIT', 'DEBIT') OR t.grid IS NOT NULL THEN TRUE
+            WHEN mm.tipo_cartao IN (0, 1) THEN TRUE
+            WHEN UPPER(mm.nome) LIKE '%CARTAO%' OR UPPER(mm.nome) LIKE '%CARTÃO%' 
+              OR UPPER(mm.nome) LIKE '%CREDIT%' OR UPPER(mm.nome) LIKE '%DEBIT%' 
+              OR UPPER(mm.nome) LIKE '%VISA%' OR UPPER(mm.nome) LIKE '%MASTER%' 
+              OR UPPER(mm.nome) LIKE '%ELO%' OR UPPER(mm.nome) LIKE '%ELECTRON%' 
+              OR UPPER(mm.nome) LIKE '%TEF%' OR UPPER(mm.nome) LIKE '%AMEX%' 
+              OR UPPER(mm.nome) LIKE '%HIPER%' OR UPPER(mm.nome) LIKE '%BANRI%' 
+              OR UPPER(mm.nome) LIKE '%ALELO%' OR UPPER(mm.nome) LIKE '%SODEXO%' 
+              OR UPPER(mm.nome) LIKE '%TICKET%' OR UPPER(mm.nome) LIKE '%VR %' 
+              OR UPPER(mm.nome) LIKE '%GOOD%' 
+              OR UPPER(mm.nome) LIKE '%EXPERS%' THEN TRUE
+            ELSE FALSE
+        END AS is_cartao
+    FROM movto m
+    JOIN motivo_movto mm ON m.motivo = mm.grid
+    LEFT JOIN tef_transacao t ON t.movto = m.grid
+    LEFT JOIN (
+        SELECT CAST(codigo AS text) AS codigo, nome FROM tef_credenciadora
+        UNION
+        SELECT CAST(grid AS text) AS codigo, nome FROM tef_credenciadora_config
+        UNION
+        SELECT CAST(codigo AS text) AS codigo, nome FROM tef_credenciadora_config
+    ) tc ON (CAST(mm.tef_credenciadora AS text) = CAST(tc.codigo AS text))
+    WHERE m.empresa = :empresa_grid
+      AND m.data BETWEEN :data_inicio AND :data_fim
+      AND mm.forma_pgto = true
+)
+SELECT 
+    forma_pagamento,
+    qtd_lancamentos,
+    valor_total,
+    ordem,
+    is_cartao
+FROM (
+    -- 1. Detalhamento individual por forma de pagamento
+    SELECT 
+        forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        SUM(valor) AS valor_total, 
+        1 AS ordem, 
+        SUM(valor) AS ord_valor,
+        BOOL_OR(is_cartao) AS is_cartao
+    FROM dados_base
+    GROUP BY forma_pagamento
+    UNION ALL
+    -- 2. Totalizador Cartão de Crédito (RECECARD S/A - Código 025)
+    SELECT 
+        'Total Cartão de Crédito (RECECARD S/A)' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        2 AS ordem, 
+        0 AS ord_valor,
+        TRUE AS is_cartao
+    FROM dados_base
+    WHERE is_credenciadora_rececard = TRUE AND categoria_cartao = 'CREDITO'
+    UNION ALL
+    -- 3. Totalizador Cartão de Débito (RECECARD S/A - Código 025)
+    SELECT 
+        'Total Cartão de Débito (RECECARD S/A)' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        3 AS ordem, 
+        0 AS ord_valor,
+        TRUE AS is_cartao
+    FROM dados_base
+    WHERE is_credenciadora_rececard = TRUE AND categoria_cartao = 'DEBITO'
+    UNION ALL
+    -- 4. TOTAL PIX (Tipo NF-e/NFC-e 20 ou Info Adicional 34)
+    SELECT 
+        'Total PIX (POS e QR Linx)' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        4 AS ordem, 
+        0 AS ord_valor,
+        FALSE AS is_cartao
+    FROM dados_base
+    WHERE is_credenciadora_pix_total = TRUE
+    UNION ALL
+    -- 5. Total Good Card
+    SELECT 
+        'Total Good Card' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        5 AS ordem, 
+        0 AS ord_valor,
+        TRUE AS is_cartao
+    FROM dados_base
+    WHERE UPPER(forma_pagamento) LIKE '%GOOD%'
+    UNION ALL
+    -- 6. Total Expers
+    SELECT 
+        'Total Expers' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        6 AS ordem, 
+        0 AS ord_valor,
+        TRUE AS is_cartao
+    FROM dados_base
+    WHERE UPPER(forma_pagamento) LIKE '%EXPERS%'
+) resultados
+ORDER BY ordem ASC, ord_valor DESC;
+Nota: Caso queira apenas o agrupamento direto básico (sem subtotais de bandeiras):
+
+sql
+SELECT 
+    mm.nome AS forma_pagamento,
+    COUNT(m.grid) AS qtd_lancamentos,
+    SUM(m.valor) AS valor_total
+FROM movto m
+JOIN motivo_movto mm ON m.motivo = mm.grid
+WHERE m.empresa = :empresa_grid
+  AND m.data BETWEEN :data_inicio AND :data_fim
+  AND mm.forma_pgto = true
+GROUP BY mm.nome
+ORDER BY valor_total DESC;
+2. OPÇÃO B — Resumo Macro de Vendas
+Agrupa todas as vendas (operacao = 'V') em duas categorias macros: COMBUSTÍVEIS e PRODUTOS E SERVIÇOS.
+
+sql
+SELECT 
+    CASE 
+        WHEN UPPER(gp.nome) = 'COMBUSTIVEL' THEN 'COMBUSTIVEIS'
+        ELSE 'PRODUTOS E SERVICOS'
+    END AS categoria_macro,
+    SUM(l.quantidade) AS quantidade_total,
+    SUM(l.valor) AS valor_total
+FROM lancto l
+JOIN produto p ON l.produto = p.grid
+JOIN grupo_produto gp ON p.grupo = gp.grid
+WHERE l.empresa = :empresa_grid
+  AND l.data BETWEEN :data_inicio AND :data_fim
+  AND l.operacao = 'V'
+GROUP BY 
+    CASE 
+        WHEN UPPER(gp.nome) = 'COMBUSTIVEL' THEN 'COMBUSTIVEIS'
+        ELSE 'PRODUTOS E SERVICOS'
+    END;
+📌 Parâmetros utilizados:
+:empresa_grid: Código/Grid da empresa selecionada (ex: 1).
+:data_inicio: Data inicial do período (ex: '2026-09-01').
+:data_fim: Data final do período (ex: '2026-09-16').

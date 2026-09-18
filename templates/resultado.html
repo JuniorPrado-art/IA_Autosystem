@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultado da Consulta - Autosystem SQL</title>
+    <!-- Font Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body {
+            overflow: auto;
+            background-color: #0b1120;
+        }
+        .report-page-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .report-header-card {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+        .report-title-area {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .report-logo {
+            font-size: 2.2rem;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            border-radius: 12px;
+            width: 54px;
+            height: 54px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .report-title-area h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+        .report-title-area p {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 0.2rem;
+        }
+        .report-actions {
+            display: flex;
+            gap: 0.75rem;
+        }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1rem;
+        }
+        .kpi-card {
+            background: #182234;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .kpi-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #94a3b8;
+            font-weight: 600;
+        }
+        .kpi-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: #38bdf8;
+        }
+        .kpi-sub {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+        .report-table-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .table-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .report-table-wrapper {
+            overflow-x: auto;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            max-height: 65vh;
+        }
+        @media print {
+            .report-actions, .table-toolbar, .btn, .search-input {
+                display: none !important;
+            }
+            body { background: white; color: black; }
+            .report-header-card, .kpi-card, .report-table-card {
+                background: white;
+                color: black;
+                border: 1px solid #ccc;
+                box-shadow: none;
+            }
+            .kpi-value { color: #0284c7; }
+            th { background: #f1f5f9; color: black; }
+            td { color: black; border-bottom: 1px solid #ddd; }
+        }
+    </style>
+</head>
+<body>
+    <div class="report-page-container">
+        <!-- Report Header -->
+        <header class="report-header-card">
+            <div class="report-title-area">
+                <div class="report-logo">📊</div>
+                <div>
+                    <h1 id="report-title">Relatório de Resultados PostgreSQL</h1>
+                    <p id="report-subtitle">Sistema Autosystem — Base de Dados Local</p>
+                </div>
+            </div>
+            <div class="report-actions">
+                <button id="btn-print" class="btn btn-secondary" onclick="window.print()">🖨️ Imprimir / PDF</button>
+                <button id="btn-export-csv" class="btn btn-secondary">📥 Exportar CSV</button>
+                <button id="btn-export-json" class="btn btn-secondary">📄 Exportar JSON</button>
+                <button class="btn btn-primary" onclick="window.close()">✖️ Fechar Aba</button>
+            </div>
+        </header>
+
+        <!-- KPI Metrics Grid -->
+        <section class="kpi-grid">
+            <div class="kpi-card">
+                <span class="kpi-label">Total Geral Calculado</span>
+                <span id="kpi-total-val" class="kpi-value">R$ 0,00</span>
+                <span id="kpi-total-sub" class="kpi-sub">Soma dos registros listados</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Total de Registros</span>
+                <span id="kpi-count" class="kpi-value">0</span>
+                <span class="kpi-sub">Linhas retornadas da consulta</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Empresa / Filial</span>
+                <span id="kpi-empresa" class="kpi-value" style="font-size: 1.1rem; color: #f8fafc;">Filial 5 (GRID 14572)</span>
+                <span class="kpi-sub">Filtro de empresa aplicado</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Período Selecionado</span>
+                <span id="kpi-periodo" class="kpi-value" style="font-size: 1.1rem; color: #f8fafc;">01/07/2026 até 31/07/2026</span>
+                <span id="kpi-time" class="kpi-sub">Executado em 0 ms</span>
+            </div>
+        </section>
+
+        <!-- Validation Alerts -->
+        <div id="report-alerts" class="validation-alerts"></div>
+
+        <!-- Description Box if any -->
+        <div id="report-desc-card" class="section-doc-card hidden">
+            <div class="doc-card-header">
+                <span class="doc-icon">💡</span>
+                <strong id="report-doc-title">Descrição do Relatório</strong>
+            </div>
+            <div id="report-doc-desc" class="doc-card-body"></div>
+        </div>
+
+        <!-- Report Table Section -->
+        <section class="report-table-card">
+            <div class="table-toolbar">
+                <h3>📋 Detalhamento dos Registros</h3>
+                <input type="text" id="report-search" class="search-input" placeholder="🔍 Filtrar nesta página...">
+            </div>
+
+            <div class="report-table-wrapper">
+                <table>
+                    <thead>
+                        <tr id="report-th">
+                            <th>Aguardando dados do relatório...</th>
+                        </tr>
+                    </thead>
+                    <tbody id="report-tb">
+                        <tr>
+                            <td class="text-center text-muted">Nenhum dado encontrado no armazenamento local.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const rawData = localStorage.getItem('autosystem_last_result');
+            if (!rawData) {
+                alert('Nenhum dado de relatório encontrado no armazenamento local. Por favor, execute uma consulta na página principal.');
+                return;
+            }
+
+            try {
+                const data = JSON.parse(rawData);
+                renderReportPage(data);
+            } catch (err) {
+                console.error("Erro ao carregar dados do relatório:", err);
+            }
+        });
+
+        function renderReportPage(data) {
+            const columns = data.columns || [];
+            const rows = data.rows || [];
+            const title = data.title || 'Relatório de Resultados PostgreSQL';
+            const desc = data.description || '';
+            const params = data.params || {};
+
+            document.getElementById('report-title').textContent = title;
+            if (data.fileName) {
+                document.getElementById('report-subtitle').textContent = `Arquivo: ${data.fileName} — Autosystem Local`;
+            }
+
+            // Documentação
+            if (desc) {
+                document.getElementById('report-doc-title').textContent = title;
+                document.getElementById('report-doc-desc').textContent = desc;
+                document.getElementById('report-desc-card').classList.remove('hidden');
+            }
+
+            // KPIs
+            document.getElementById('kpi-count').textContent = rows.length;
+            document.getElementById('kpi-time').textContent = `Tempo de resposta: ${data.execution_time_ms || 0} ms`;
+
+            if (params.empresa) {
+                document.getElementById('kpi-empresa').textContent = `GRID ${params.empresa}`;
+            }
+            if (params.dt_periodo_ini && params.dt_periodo_fim) {
+                document.getElementById('kpi-periodo').textContent = `${params.dt_periodo_ini} até ${params.dt_periodo_fim}`;
+            }
+
+            // Alertas
+            const alertsDiv = document.getElementById('report-alerts');
+            alertsDiv.innerHTML = '';
+            if (data.validation && data.validation.alerts) {
+                data.validation.alerts.forEach(al => {
+                    const d = document.createElement('div');
+                    d.className = `alert alert-${al.type}`;
+                    d.innerHTML = `<strong>${al.title}:</strong> ${al.message}`;
+                    alertsDiv.appendChild(d);
+                });
+            }
+
+            // Tabela
+            const thRow = document.getElementById('report-th');
+            const tbBody = document.getElementById('report-tb');
+            thRow.innerHTML = '';
+            tbBody.innerHTML = '';
+
+            if (columns.length === 0) {
+                thRow.innerHTML = '<th>Status</th>';
+                tbBody.innerHTML = '<tr><td class="text-center text-muted">Sem colunas para exibir.</td></tr>';
+                return;
+            }
+
+            let grandTotal = 0;
+            let valueColName = null;
+
+            columns.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col;
+                thRow.appendChild(th);
+
+                if (col.toLowerCase().includes('valor') || col.toLowerCase().includes('total') || col.toLowerCase().includes('saldo')) {
+                    valueColName = col;
+                }
+            });
+
+            rows.forEach(r => {
+                const tr = document.createElement('tr');
+                let isTotalRow = false;
+
+                columns.forEach(col => {
+                    const valStr = String(r[col] || '').toUpperCase();
+                    if (valStr.includes('TOTAL') || valStr.includes('TOTALIZADOR')) {
+                        isTotalRow = true;
+                    }
+                });
+                if (isTotalRow) tr.className = 'highlight-total';
+
+                columns.forEach(col => {
+                    const td = document.createElement('td');
+                    const val = r[col];
+
+                    if (val === null || val === undefined) {
+                        td.textContent = 'NULL';
+                        td.className = 'text-muted small';
+                    } else if (typeof val === 'number') {
+                        if (col.toLowerCase().includes('valor') || col.toLowerCase().includes('total') || col.toLowerCase().includes('saldo') || col.toLowerCase().includes('entradas') || col.toLowerCase().includes('saidas')) {
+                            td.textContent = val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                            // Somar apenas se não for linha de resumo UNION ALL para não duplicar no KPI
+                            if (!isTotalRow && col === valueColName) {
+                                grandTotal += val;
+                            }
+                        } else {
+                            td.textContent = val.toLocaleString('pt-BR');
+                        }
+                    } else {
+                        td.textContent = val;
+                    }
+
+                    tr.appendChild(td);
+                });
+
+                tbBody.appendChild(tr);
+            });
+
+            document.getElementById('kpi-total-val').textContent = grandTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+            // Search
+            document.getElementById('report-search').addEventListener('input', (e) => {
+                const q = e.target.value.toLowerCase().trim();
+                const trs = tbBody.querySelectorAll('tr');
+                trs.forEach(tr => {
+                    tr.style.display = (!q || tr.textContent.toLowerCase().includes(q)) ? '' : 'none';
+                });
+            });
+
+            // Export CSV
+            document.getElementById('btn-export-csv').addEventListener('click', () => {
+                let csv = columns.join(',') + '\n';
+                rows.forEach(r => {
+                    const rowVals = columns.map(c => `"${String(r[c] || '').replace(/"/g, '""')}"`);
+                    csv += rowVals.join(',') + '\n';
+                });
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `relatorio_autosystem_${Date.now()}.csv`;
+                a.click();
+            });
+
+            // Export JSON
+            document.getElementById('btn-export-json').addEventListener('click', () => {
+                const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `relatorio_autosystem_${Date.now()}.json`;
+                a.click();
+            });
+        }
+    </script>
+</body>
+</html>

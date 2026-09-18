@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fechamento_financeiro_autosystem xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <metadata>
+    <sistema>Autosystem</sistema>
+    <modulo>Fechamento Diário &amp; Módulos Financeiros</modulo>
+    <banco_dados>PostgreSQL</banco_dados>
+    <versao_script>1.1</versao_script>
+    <descricao>Script XML unificado contendo todas as consultas SQL parametrizadas com variáveis do Autosystem ($empresa, $dt_periodo_ini, $dt_periodo_fim).</descricao>
+    <parametros>
+      <parametro nome="$empresa" tipo="integer" descricao="GRID da empresa/filial (Ex: 7)"/>
+      <parametro nome="$dt_periodo_ini" tipo="date" descricao="Data inicial do período"/>
+      <parametro nome="$dt_periodo_fim" tipo="date" descricao="Data final do período"/>
+    </parametros>
+  </metadata>
+
+  <datasets>
+
+    <!-- DATASET 1: RECEBIMENTOS POR FORMA DE PAGAMENTO -->
+    <dataset id="recebimentos_por_forma">
+      <titulo>Recebimentos por Forma de Pagamento</titulo>
+      <descricao>Consolidação de recebimentos do caixa/movimento financeiro agrupados por motivo/forma de pagamento.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    mm.nome AS forma_pagamento,
+    COUNT(m.grid) AS qtd_lancamentos,
+    SUM(m.valor) AS valor_total
+FROM movto m
+JOIN motivo_movto mm ON m.motivo = mm.grid
+WHERE m.empresa = $empresa
+  AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND mm.forma_pgto = true
+GROUP BY mm.nome
+ORDER BY valor_total DESC;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 2: RESUMO MACRO DE VENDAS -->
+    <dataset id="resumo_vendas_macro">
+      <titulo>Resumo Macro de Vendas</titulo>
+      <descricao>Totalizador geral separando Combustíveis de Produtos e Serviços.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    CASE 
+        WHEN UPPER(gp.nome) = 'COMBUSTIVEL' THEN 'COMBUSTIVEIS'
+        ELSE 'PRODUTOS E SERVICOS'
+    END AS categoria_macro,
+    SUM(l.quantidade) AS quantidade_total,
+    SUM(l.valor) AS valor_total
+FROM lancto l
+JOIN produto p ON l.produto = p.grid
+JOIN grupo_produto gp ON p.grupo = gp.grid
+WHERE l.empresa = $empresa
+  AND l.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND l.operacao = 'V'
+GROUP BY 
+    CASE 
+        WHEN UPPER(gp.nome) = 'COMBUSTIVEL' THEN 'COMBUSTIVEIS'
+        ELSE 'PRODUTOS E SERVICOS'
+    END;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 3: VENDAS DE COMBUSTÍVEL POR PRODUTO -->
+    <dataset id="vendas_combustivel_produto">
+      <titulo>Vendas de Combustível por Produto</titulo>
+      <descricao>Detalhamento de volume em litros, preço médio e total vendido por tipo de combustível.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    p.codigo AS codigo_produto,
+    p.nome AS produto,
+    p.unid_med,
+    SUM(l.quantidade) AS volume_litros,
+    ROUND(CAST(AVG(l.preco_unit) AS numeric), 3) AS preco_medio,
+    SUM(l.valor) AS total_venda
+FROM lancto l
+JOIN produto p ON l.produto = p.grid
+JOIN grupo_produto gp ON p.grupo = gp.grid
+WHERE l.empresa = $empresa
+  AND l.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND l.operacao = 'V'
+  AND UPPER(gp.nome) = 'COMBUSTIVEL'
+GROUP BY p.codigo, p.nome, p.unid_med
+ORDER BY total_venda DESC;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 4: VENDAS DE COMBUSTÍVEL POR BICO -->
+    <dataset id="vendas_combustivel_bico">
+      <titulo>Vendas de Combustível por Bico</titulo>
+      <descricao>Detalhamento por bico com encerrantes inicial e final calculados por MIN/MAX no período.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    l.bico AS numero_bico,
+    p.nome AS combustivel,
+    MIN(l.encerrante) AS encerrante_inicial_aprox,
+    MAX(l.encerrante) AS encerrante_final_aprox,
+    SUM(l.quantidade) AS total_litros,
+    SUM(l.valor) AS total_valor
+FROM lancto l
+JOIN produto p ON l.produto = p.grid
+JOIN grupo_produto gp ON p.grupo = gp.grid
+WHERE l.empresa = $empresa
+  AND l.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND l.operacao = 'V'
+  AND UPPER(gp.nome) = 'COMBUSTIVEL'
+  AND l.bico IS NOT NULL AND l.bico <> ''
+GROUP BY l.bico, p.nome
+ORDER BY l.bico;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 5: VENDAS DE PRODUTOS DA LOJA / CONVENIÊNCIA POR CATEGORIA -->
+    <dataset id="vendas_conveniencia_categoria">
+      <titulo>Vendas da Loja de Conveniência por Categoria</titulo>
+      <descricao>Consolidação de vendas de itens não-combustíveis agrupados por grupo de produto.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    gp.nome AS categoria,
+    COUNT(DISTINCT l.produto) AS diversidade_produtos,
+    SUM(l.quantidade) AS qtd_itens,
+    SUM(l.valor) AS total_venda
+FROM lancto l
+JOIN produto p ON l.produto = p.grid
+JOIN grupo_produto gp ON p.grupo = gp.grid
+WHERE l.empresa = $empresa
+  AND l.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND l.operacao = 'V'
+  AND UPPER(gp.nome) <> 'COMBUSTIVEL'
+GROUP BY gp.nome
+ORDER BY total_venda DESC;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 6: SANGRIA DE CAIXA -->
+    <dataset id="sangrias_e_suprimentos">
+      <titulo>Sangrias de Caixa</titulo>
+      <descricao>Listagem dos sangrias/retiradas registradas nos caixas da empresa no período.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    c.data AS data_caixa,
+    c.turno,
+    s.hora,
+    s.valor,
+    s.obs
+FROM sangria s
+JOIN caixa c ON s.caixa = c.grid
+WHERE c.empresa = $empresa
+  AND c.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+ORDER BY s.hora;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 7: DIFERENÇAS DE CAIXA (FALTAS / SOBRAS) -->
+    <dataset id="diferencas_caixa">
+      <titulo>Diferenças de Caixa (Faltas e Sobras)</titulo>
+      <descricao>Apuração de faltas e sobras apontadas no fechamento de caixa por operador.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    m.data,
+    mm.nome AS tipo_diferenca,
+    p.nome AS operador_caixa,
+    m.valor,
+    m.obs
+FROM movto m
+JOIN motivo_movto mm ON m.motivo = mm.grid
+LEFT JOIN pessoa p ON m.pessoa = p.grid
+WHERE m.empresa = $empresa
+  AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND UPPER(mm.nome) IN ('FALTA DE CAIXA', 'SOBRA DE CAIXA')
+ORDER BY m.data, m.hora;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 8: VENDAS A PRAZO DETALHADAS POR CLIENTE -->
+    <dataset id="vendas_prazo_clientes">
+      <titulo>Vendas a Prazo por Cliente</titulo>
+      <descricao>Detalhamento das vendas faturadas a prazo no período (Lançamentos na conta 1.3.03 - Notas a Prazo).</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    m.data,
+    p.codigo AS codigo_cliente,
+    p.nome AS cliente,
+    p.cpf AS cpf_cnpj,
+    m.documento AS numero_documento,
+    m.valor AS valor_venda_prazo
+FROM movto m
+LEFT JOIN pessoa p ON m.pessoa = p.grid
+WHERE m.empresa = $empresa
+  AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND m.conta_debitar = '1.3.03'
+ORDER BY p.nome, m.data;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 9: CONTAS A PAGAR - SALDO EM ABERTO POR FORNECEDOR -->
+    <dataset id="contas_pagar_saldo">
+      <titulo>Contas a Pagar - Saldo em Aberto por Fornecedor</titulo>
+      <descricao>Posição de saldos a pagar por fornecedor na conta de Passivo 2.1.1 (Créditos - Débitos).</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    p.codigo AS codigo_fornecedor,
+    COALESCE(p.nome, 'FORNECEDOR NAO IDENTIFICADO') AS fornecedor,
+    p.cpf AS cnpj_cpf,
+    SUM(CASE WHEN m.conta_creditar = '2.1.1' THEN m.valor ELSE 0 END) AS total_gerado_credito,
+    SUM(CASE WHEN m.conta_debitar  = '2.1.1' THEN m.valor ELSE 0 END) AS total_pago_debito,
+    (SUM(CASE WHEN m.conta_creditar = '2.1.1' THEN m.valor ELSE 0 END) -
+     SUM(CASE WHEN m.conta_debitar  = '2.1.1' THEN m.valor ELSE 0 END)) AS saldo_em_aberto
+FROM movto m
+LEFT JOIN pessoa p ON m.pessoa = p.grid
+WHERE m.empresa = $empresa
+  AND ('2.1.1' IN (m.conta_creditar, m.conta_debitar))
+GROUP BY p.codigo, p.nome, p.cpf
+HAVING (SUM(CASE WHEN m.conta_creditar = '2.1.1' THEN m.valor ELSE 0 END) -
+        SUM(CASE WHEN m.conta_debitar  = '2.1.1' THEN m.valor ELSE 0 END)) <> 0
+ORDER BY saldo_em_aberto DESC;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 10: CONTAS A RECEBER - SALDO EM ABERTO POR CLIENTE E FORMA -->
+    <dataset id="contas_receber_saldo">
+      <titulo>Contas a Receber - Saldo em Aberto por Conta e Cliente</titulo>
+      <descricao>Posição detalhada de contas a receber por cliente e conta de Ativo 1.3.x (Débitos - Créditos).</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    c.codigo AS codigo_conta,
+    c.nome AS nome_conta_forma,
+    p.codigo AS codigo_cliente,
+    COALESCE(p.nome, 'SEM PESSOA VINCULADA (CARTÃO/PIX/ADM)') AS cliente,
+    SUM(CASE WHEN m.conta_debitar LIKE '1.3%' THEN m.valor ELSE 0 END) AS total_gerado_debito,
+    SUM(CASE WHEN m.conta_creditar LIKE '1.3%' THEN m.valor ELSE 0 END) AS total_baixado_credito,
+    (SUM(CASE WHEN m.conta_debitar LIKE '1.3%' THEN m.valor ELSE 0 END) -
+     SUM(CASE WHEN m.conta_creditar LIKE '1.3%' THEN m.valor ELSE 0 END)) AS saldo_em_aberto
+FROM movto m
+JOIN conta c ON (m.conta_debitar = c.codigo OR m.conta_creditar = c.codigo) AND c.tipo_conta_receber = true
+LEFT JOIN pessoa p ON m.pessoa = p.grid
+WHERE m.empresa = $empresa
+GROUP BY c.codigo, c.nome, p.codigo, p.nome
+HAVING (SUM(CASE WHEN m.conta_debitar LIKE '1.3%' THEN m.valor ELSE 0 END) -
+        SUM(CASE WHEN m.conta_creditar LIKE '1.3%' THEN m.valor ELSE 0 END)) <> 0
+ORDER BY c.codigo, saldo_em_aberto DESC;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 11: CONTAS A RECEBER - RESUMO AGREGADO POR FORMA/CONTA -->
+    <dataset id="contas_receber_resumo">
+      <titulo>Contas a Receber - Resumo por Conta</titulo>
+      <descricao>Visão gerencial consolidada por tipo de conta a receber (Cartões, Convênios, Notas a Prazo, Cheques).</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    c.codigo AS codigo_conta,
+    c.nome AS nome_conta,
+    COUNT(DISTINCT m.pessoa) AS qtd_clientes,
+    (SUM(CASE WHEN m.conta_debitar = c.codigo THEN m.valor ELSE 0 END) -
+     SUM(CASE WHEN m.conta_creditar = c.codigo THEN m.valor ELSE 0 END)) AS saldo_total_aberto
+FROM movto m
+JOIN conta c ON (m.conta_debitar = c.codigo OR m.conta_creditar = c.codigo) AND c.tipo_conta_receber = true
+WHERE m.empresa = $empresa
+GROUP BY c.codigo, c.nome
+HAVING (SUM(CASE WHEN m.conta_debitar = c.codigo THEN m.valor ELSE 0 END) -
+        SUM(CASE WHEN m.conta_creditar = c.codigo THEN m.valor ELSE 0 END)) <> 0
+ORDER BY c.codigo;
+        ]]>
+      </sql>
+    </dataset>
+
+    <!-- DATASET 12: LEITURA DE ENCERRANTES (AUDITORIA BICO / LMC / LANCTO) -->
+    <dataset id="leitura_bico_encerrante">
+      <titulo>Auditoria e Leitura de Encerrantes de Bico</titulo>
+      <descricao>Consulta de suporte para reconciliação do encerrante de bicos via lancto e bico_encerrante.</descricao>
+      <sql>
+        <![CDATA[
+SELECT 
+    l.bico,
+    p.nome AS combustivel,
+    MIN(l.encerrante) AS enc_inicial,
+    MAX(l.encerrante) AS enc_final,
+    SUM(l.quantidade) AS volume_total
+FROM lancto l
+JOIN produto p ON l.produto = p.grid
+JOIN grupo_produto gp ON p.grupo = gp.grid
+WHERE l.empresa = $empresa
+  AND l.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND l.operacao = 'V'
+  AND UPPER(gp.nome) = 'COMBUSTIVEL'
+  AND l.bico IS NOT NULL AND l.bico <> ''
+GROUP BY l.bico, p.nome
+ORDER BY l.bico;
+        ]]>
+      </sql>
+    </dataset>
+
+  </datasets>
+</fechamento_financeiro_autosystem>

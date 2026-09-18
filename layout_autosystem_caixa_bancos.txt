@@ -1,0 +1,147 @@
+================================================================================
+AUTOSYSTEM - CAIXA ADM E BANCOS DA EMPRESA (SEM CAIXAS DE PISTA/PDV)
+================================================================================
+
+================================================================================
+RELATÓRIO 1: RESUMO TOTALIZADO POR CATEGORIA / MOTIVO (OPÇÃO L)
+(Exclui Caixas de Pista/PDV como 'FF x - CAIXA xx', trazendo apenas Caixa ADM e Bancos)
+================================================================================
+
+1. CONSULTA SQL (Aba Origem dos dados SQL):
+--------------------------------------------------------------------------------
+SELECT 
+    c.codigo AS codigo_conta,
+    c.nome AS conta_financeira,
+    mm.nome AS categoria_motivo,
+    COUNT(m.grid) AS qtd_lancamentos,
+    SUM(CASE WHEN m.conta_debitar  = c.codigo THEN m.valor ELSE 0 END) AS total_entradas,
+    SUM(CASE WHEN m.conta_creditar = c.codigo THEN m.valor ELSE 0 END) AS total_saidas,
+    (SUM(CASE WHEN m.conta_debitar  = c.codigo THEN m.valor ELSE 0 END) - 
+     SUM(CASE WHEN m.conta_creditar = c.codigo THEN m.valor ELSE 0 END)) AS saldo_liquido_periodo
+FROM movto m
+JOIN conta c ON (m.conta_debitar = c.codigo OR m.conta_creditar = c.codigo) 
+  AND (
+      (c.codigo LIKE '1.1%' AND UPPER(c.nome) LIKE '%ADM%') 
+      OR 
+      c.codigo LIKE '1.2%'
+  )
+JOIN motivo_movto mm ON m.motivo = mm.grid
+WHERE m.empresa = $empresa
+  AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+GROUP BY c.codigo, c.nome, mm.nome
+ORDER BY c.codigo, total_entradas DESC, total_saidas DESC;
+
+
+2. ABA "CAMPOS":
+--------------------------------------------------------------------------------
+1  rel_posto_nome         tam=60           
+2  rel_data_hora          tam=18           
+3  codigo_conta           tam=8            
+4  conta_financeira       tam=22           
+5  categoria_motivo       tam=28           
+6  qtd_lancamentos        tam=10  fmt=%d   
+7  total_entradas         tam=14  fmt=%.02f
+8  total_saidas           tam=14  fmt=%.02f
+9  saldo_liquido_periodo  tam=14  fmt=%.02f
+
+
+3. ABA "LAYOUT":
+--------------------------------------------------------------------------------
+<cab_pagina>
+#1                                                                                          #2
+--------------------------------------------------------------------------------------------------------------------
+
+                     RESUMO POR CATEGORIA - CAIXA ADM E BANCOS DA EMPRESA
+
++--------+----------------------+----------------------------+----------+--------------+--------------+--------------+
+| Conta  | Conta Financeira     | Categoria / Motivo         | Qtd.Lanc.| Tot.Entradas |  Tot.Saidas  | Saldo Liquido|
++--------+----------------------+----------------------------+----------+--------------+--------------+--------------+
+</cab_pagina>
+<detalhe>
+|#       |#                     |#                           |#         |#             |#             |#             |
+</detalhe>
+<rod_relat>
++--------+----------------------+----------------------------+----------+--------------+--------------+--------------+
+</rod_relat>
+<rod_pagina>
++--------+----------------------+----------------------------+----------+--------------+--------------+--------------+
+</rod_pagina>
+
+
+
+================================================================================
+RELATÓRIO 2: EXTRATO DETALHADO DE LANÇAMENTOS (OPÇÃO K)
+(Exclui Caixas de Pista/PDV como 'FF x - CAIXA xx', trazendo apenas Caixa ADM e Bancos)
+================================================================================
+
+1. CONSULTA SQL (Aba Origem dos dados SQL):
+--------------------------------------------------------------------------------
+SELECT 
+    m.data,
+    m.hora,
+    c.codigo AS codigo_conta,
+    c.nome AS conta_financeira,
+    mm.nome AS categoria_motivo,
+    COALESCE(p.nome, 'NAO ESPECIFICADO') AS pessoa_historico,
+    m.documento AS numero_documento,
+    CASE 
+        WHEN m.conta_debitar = c.codigo THEN 'ENTRADA'
+        ELSE 'SAIDA'
+    END AS tipo_movimento,
+    CASE WHEN m.conta_debitar  = c.codigo THEN m.valor ELSE 0 END AS valor_entrada,
+    CASE WHEN m.conta_creditar = c.codigo THEN m.valor ELSE 0 END AS valor_saida,
+    m.obs
+FROM movto m
+JOIN conta c ON (
+    (m.conta_debitar = c.codigo OR m.conta_creditar = c.codigo)
+    AND (
+        (c.codigo LIKE '1.1%' AND UPPER(c.nome) LIKE '%ADM%') 
+        OR 
+        c.codigo LIKE '1.2%'
+    )
+)
+JOIN motivo_movto mm ON m.motivo = mm.grid
+LEFT JOIN pessoa p ON m.pessoa = p.grid
+WHERE m.empresa = $empresa
+  AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+ORDER BY c.codigo, m.data, m.hora;
+
+
+2. ABA "CAMPOS":
+--------------------------------------------------------------------------------
+1   rel_posto_nome     tam=60           
+2   rel_data_hora      tam=18           
+3   data               tam=10           
+4   hora               tam=8            
+5   codigo_conta       tam=8            
+6   conta_financeira   tam=18           
+7   categoria_motivo   tam=20           
+8   pessoa_historico   tam=22           
+9   numero_documento   tam=10           
+10  tipo_movimento     tam=8            
+11  valor_entrada      tam=12  fmt=%.02f
+12  valor_saida        tam=12  fmt=%.02f
+13  obs                tam=20           
+
+
+3. ABA "LAYOUT":
+--------------------------------------------------------------------------------
+<cab_pagina>
+#1                                                                                          #2
+--------------------------------------------------------------------------------------------------------------------
+
+                     EXTRATO DETALHADO - CAIXA ADM E BANCOS DA EMPRESA
+
++----------+--------+--------+------------------+--------------------+----------------------+----------+--------+------------+------------+--------------------+
+| Data     | Hora   | Conta  | Conta Financeira | Categoria / Motivo | Pessoa / Historico   | Documento| Tipo   | Valor Entr.| Valor Said.| Observacao         |
++----------+--------+--------+------------------+--------------------+----------------------+----------+--------+------------+------------+--------------------+
+</cab_pagina>
+<detalhe>
+|#         |#       |#       |#                 |#                   |#                     |#         |#       |#           |#           |#                   |
+</detalhe>
+<rod_relat>
++----------+--------+--------+------------------+--------------------+----------------------+----------+--------+------------+------------+--------------------+
+</rod_relat>
+<rod_pagina>
++----------+--------+--------+------------------+--------------------+----------------------+----------+--------+------------+------------+--------------------+
+</rod_pagina>

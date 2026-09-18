@@ -1,0 +1,248 @@
+🟢 1. Recebimentos por Forma de Pagamento (OPÇÃO A)
+Esta consulta analisa a tabela de movimentações (movto), cruza com os motivos de movimentação marcados como forma de pagamento (motivo_movto.forma_pgto = true) e com as transações TEF (tef_transacao).
+
+📌 SQL Completo da OPÇÃO A (Com Totais Agrupados de Cartões, Good Card e Expers)
+Este é o SQL oficial executado no painel (robo. py), que gera tanto as formas individuais quanto os blocos totalizadores:
+
+sql
+WITH dados_base AS (
+    SELECT 
+        m.grid,
+        m.valor,
+        mm.nome AS forma_pagamento,
+        -- Identificação da Categoria (CREDITO vs DEBITO)
+        CASE 
+            WHEN t.operacao = 'CREDIT' THEN 'CREDITO'
+            WHEN t.operacao = 'DEBIT' THEN 'DEBITO'
+            WHEN mm.tipo_cartao = 0 THEN 'CREDITO'
+            WHEN mm.tipo_cartao = 1 THEN 'DEBITO'
+            WHEN UPPER(mm.nome) LIKE '%ELECTRON%' OR UPPER(mm.nome) LIKE '%DEBIT%' THEN 'DEBITO'
+            WHEN UPPER(mm.nome) LIKE '%CREDIT%' THEN 'CREDITO'
+            ELSE NULL
+        END AS categoria_cartao,
+        -- Identificação da Credenciadora RECECARD S/A (Código 025)
+        CASE 
+            -- Condição Principal: Tabela tef_credenciadora / tef_credenciadora_config (Código 025 ou Nome RECECARD/REDECARD)
+            WHEN mm.tef_credenciadora IN ('025', '25')
+              OR tc.codigo IN ('025', '25')
+              OR UPPER(COALESCE(tc.nome, '')) LIKE '%RECECARD%'
+              OR UPPER(COALESCE(tc.nome, '')) LIKE '%REDECARD%'
+              OR UPPER(mm.nome) LIKE '%RECECARD%'
+              OR UPPER(mm.nome) LIKE '%REDECARD%' THEN TRUE
+            -- Apoio Complementar: Tabela tef_transacao (operadora_nome)
+            WHEN UPPER(COALESCE(t.operadora_nome, '')) LIKE '%RECECARD%'
+              OR UPPER(COALESCE(t.operadora_nome, '')) LIKE '%REDECARD%' THEN TRUE
+            ELSE FALSE
+        END AS is_credenciadora_rececard,
+
+        -- Identificação Unificada de PIX e QR Linx (Tipo NF-e/NFC-e 20/21 - Estático/Dinâmico, Info Adicional 34/35 ou QR Linx)
+        CASE 
+            WHEN mm.tipo_nfce IN ('20', '21', '22')
+              OR CAST(mm.info_adic AS text) IN ('34', '35')
+              OR UPPER(mm.nome) LIKE '%QR LINX%'
+              OR UPPER(mm.nome) LIKE '%QRLINX%' THEN TRUE
+            ELSE FALSE
+        END AS is_credenciadora_pix_total
+    FROM movto m
+    JOIN motivo_movto mm ON m.motivo = mm.grid
+    LEFT JOIN tef_transacao t ON t.movto = m.grid
+    LEFT JOIN (
+        SELECT CAST(codigo AS text) AS codigo, nome FROM tef_credenciadora
+        UNION
+        SELECT CAST(grid AS text) AS codigo, nome FROM tef_credenciadora_config
+        UNION
+        SELECT CAST(codigo AS text) AS codigo, nome FROM tef_credenciadora_config
+    ) tc ON (CAST(mm.tef_credenciadora AS text) = CAST(tc.codigo AS text))
+    WHERE m.empresa IN (SELECT grid FROM empresa WHERE codigo = $empresa OR grid = $empresa)
+      AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+      AND mm.forma_pgto = true
+)
+SELECT 
+    forma_pagamento,
+    qtd_lancamentos,
+    valor_total
+FROM (
+    -- 1. Detalhamento de cada Forma de Pagamento individual
+    SELECT 
+        forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        SUM(valor) AS valor_total, 
+        1 AS ordem, 
+        SUM(valor) AS ord_valor
+    FROM dados_base
+    GROUP BY forma_pagamento
+
+    UNION ALL
+
+    -- 2. Total Cartão de Crédito (Credenciadora RECECARD S/A - Código 025)
+    SELECT 
+        'Total Cartão de Crédito (RECECARD S/A)' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        2 AS ordem, 
+        0 AS ord_valor
+    FROM dados_base
+    WHERE is_credenciadora_rececard = TRUE AND categoria_cartao = 'CREDITO'
+
+    UNION ALL
+
+    -- 3. Total Cartão de Débito (Credenciadora RECECARD S/A - Código 025)
+    SELECT 
+        'Total Cartão de Débito (RECECARD S/A)' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        3 AS ordem, 
+        0 AS ord_valor
+    FROM dados_base
+    WHERE is_credenciadora_rececard = TRUE AND categoria_cartao = 'DEBITO'
+
+    UNION ALL
+
+    -- 4. TOTAL PIX (Tipo NF-e/NFC-e 20 ou Info Adicional 34)
+    SELECT 
+        'Total PIX (POS e QR Linx)' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        4 AS ordem, 
+        0 AS ord_valor
+    FROM dados_base
+    WHERE is_credenciadora_pix_total = TRUE
+
+    UNION ALL
+
+    -- 5. Total Good Card
+    SELECT 
+        'Total Good Card' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        5 AS ordem, 
+        0 AS ord_valor
+    FROM dados_base
+    WHERE UPPER(forma_pagamento) LIKE '%GOOD%'
+
+    UNION ALL
+
+    -- 6. Total Expers
+    SELECT 
+        'Total Expers' AS forma_pagamento, 
+        COUNT(grid) AS qtd_lancamentos, 
+        COALESCE(SUM(valor), 0) AS valor_total, 
+        6 AS ordem, 
+        0 AS ord_valor
+    FROM dados_base
+    WHERE UPPER(forma_pagamento) LIKE '%EXPERS%'
+) resultados
+ORDER BY ordem ASC, ord_valor DESC;
+
+📌 Versão Direta / Simplificada da OPÇÃO A (Apenas agrupamento por forma)
+sql
+SELECT 
+    mm.nome AS forma_pagamento,
+    COUNT(m.grid) AS qtd_lancamentos,
+    SUM(m.valor) AS valor_total
+FROM movto m
+JOIN motivo_movto mm ON m.motivo = mm.grid
+WHERE m.empresa IN (SELECT grid FROM empresa WHERE codigo = $empresa OR grid = $empresa)
+  AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+  AND mm.forma_pgto = true
+GROUP BY mm.nome
+ORDER BY valor_total DESC;
+
+🟣 2. Movimentações Caixa ADM & Bancos — Depósitos (OPÇÃO L)
+A OPÇÃO L consolida todas as contas financeiras do grupo 1.1% (Caixa ADM) e 1.2% (Bancos), calculando débitos (entradas) e créditos (saídas).
+
+📌 SQL da OPÇÃO L Completa (Utilizada pelo painel)
+Este SQL obtém todas as movimentações agrupadas por conta e motivo:
+
+sql
+WITH contas_adm AS (
+    SELECT codigo, nome
+    FROM conta
+    WHERE (codigo LIKE '1.1%' AND UPPER(nome) LIKE '%ADM%')
+       OR codigo LIKE '1.2%'
+),
+movto_resumo AS (
+    -- Entradas (conta debitada)
+    SELECT
+        m.grid, m.motivo,
+        c.codigo AS conta_codigo, c.nome AS conta_nome,
+        m.valor AS valor_entrada, 0.00 AS valor_saida
+    FROM movto m
+    JOIN contas_adm c ON m.conta_debitar = c.codigo
+    WHERE m.empresa IN (SELECT grid FROM empresa WHERE codigo = $empresa OR grid = $empresa)
+      AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+    UNION ALL
+    -- Saídas (conta creditada)
+    SELECT
+        m.grid, m.motivo,
+        c.codigo, c.nome,
+        0.00, m.valor
+    FROM movto m
+    JOIN contas_adm c ON m.conta_creditar = c.codigo
+    WHERE m.empresa IN (SELECT grid FROM empresa WHERE codigo = $empresa OR grid = $empresa)
+      AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+)
+SELECT
+    mr.conta_codigo AS codigo_conta,
+    mr.conta_nome AS conta_financeira,
+    mm.nome AS categoria_motivo,
+    COUNT(mr.grid) AS qtd_lancamentos,
+    SUM(mr.valor_entrada) AS total_entradas,
+    SUM(mr.valor_saida) AS total_saidas,
+    (SUM(mr.valor_entrada) - SUM(mr.valor_saida)) AS saldo_liquido_periodo
+FROM movto_resumo mr
+JOIN motivo_movto mm ON mr.motivo = mm.grid
+GROUP BY mr.conta_codigo, mr.conta_nome, mm.nome
+ORDER BY mr.conta_codigo, total_entradas DESC, total_saidas DESC;
+
+📌 SQL Específico Filtrando Apenas os Depósitos (Item 2 do Resumo)
+Se você desejar rodar no banco já trazendo apenas os registros que alimentam diretamente o bloco de Depósitos do Resumo de Resultados:
+
+sql
+WITH contas_adm AS (
+    SELECT codigo, nome
+    FROM conta
+    WHERE (codigo LIKE '1.1%' AND UPPER(nome) LIKE '%ADM%')
+       OR codigo LIKE '1.2%'
+),
+movto_resumo AS (
+    SELECT
+        m.grid, m.motivo,
+        c.codigo AS conta_codigo, c.nome AS conta_nome,
+        m.valor AS valor_entrada, 0.00 AS valor_saida
+    FROM movto m
+    JOIN contas_adm c ON m.conta_debitar = c.codigo
+    WHERE m.empresa IN (SELECT grid FROM empresa WHERE codigo = $empresa OR grid = $empresa)
+      AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+    UNION ALL
+    SELECT
+        m.grid, m.motivo,
+        c.codigo, c.nome,
+        0.00, m.valor
+    FROM movto m
+    JOIN contas_adm c ON m.conta_creditar = c.codigo
+    WHERE m.empresa IN (SELECT grid FROM empresa WHERE codigo = $empresa OR grid = $empresa)
+      AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+)
+SELECT
+    mr.conta_codigo AS codigo_conta,
+    mr.conta_nome AS conta_financeira,
+    mm.nome AS categoria_motivo,
+    COUNT(mr.grid) AS qtd_lancamentos,
+    SUM(mr.valor_entrada) AS total_entradas,
+    SUM(mr.valor_saida) AS total_saidas,
+    (SUM(mr.valor_entrada) - SUM(mr.valor_saida)) AS saldo_liquido_periodo
+FROM movto_resumo mr
+JOIN motivo_movto mm ON mr.motivo = mm.grid
+WHERE UPPER(mm.nome) LIKE '%DEPOSITO%' 
+   OR UPPER(mm.nome) LIKE '%DEPÓSITO%'
+   OR UPPER(mm.nome) LIKE '%EMPRESTIMO%'
+   OR UPPER(mm.nome) LIKE '%EMPRÉSTIMO%'
+GROUP BY mr.conta_codigo, mr.conta_nome, mm.nome
+ORDER BY mr.conta_codigo, total_entradas DESC, total_saidas DESC;
+🔑 Parâmetros das Consultas
+Substitua as variáveis conforme o ambiente:
+
+$empresa ou %s: ID (grid) da empresa selecionada (ex: 1).
+$dt_periodo_ini ou %s: Data inicial (ex: '2026-03-01').
+$dt_periodo_fim ou %s: Data final (ex: '2026-03-31').

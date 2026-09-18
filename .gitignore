@@ -1,0 +1,21 @@
+# Configurações locais e segredos
+config.json
+*.env
+.env
+
+# Python e Ambientes Virtuais
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# IDEs e Ferramentas
+.vscode/
+.idea/
+.agents/
+scratch/
+
+# Logs e arquivos temporários
+*.log

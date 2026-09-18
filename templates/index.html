@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autosystem SQL Tester & Validador PostgreSQL</title>
+    <!-- Font Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v={{ range(1, 100000) | random }}">
+
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation & Config -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo-icon">⚡</div>
+                <div>
+                    <h2>Autosystem SQL</h2>
+                    <span class="subtitle">Validador PostgreSQL</span>
+                </div>
+            </div>
+
+            <!-- DB Connection Status Card -->
+            <div class="card db-card">
+                <div class="card-header">
+                    <h3>🔌 Conexão PostgreSQL</h3>
+                    <span id="db-status-badge" class="badge badge-secondary">Não testado</span>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="db-host">Host / Servidor</label>
+                        <input type="text" id="db-host" value="localhost" placeholder="localhost">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col">
+                            <label for="db-port">Porta</label>
+                            <input type="number" id="db-port" value="5432">
+                        </div>
+                        <div class="form-group col">
+                            <label for="db-name">Banco de Dados</label>
+                            <input type="text" id="db-name" value="autosystem" placeholder="autosystem">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col">
+                            <label for="db-user">Usuário</label>
+                            <input type="text" id="db-user" value="postgres" placeholder="postgres">
+                        </div>
+                        <div class="form-group col">
+                            <label for="db-password">Senha</label>
+                            <input type="password" id="db-password" placeholder="Senha do banco">
+                        </div>
+                    </div>
+                    <button id="btn-test-db" class="btn btn-secondary full-width">Testar e Salvar Conexão</button>
+                </div>
+            </div>
+
+            <!-- SQL File Selector Card -->
+            <div class="card file-card">
+                <div class="card-header">
+                    <h3>📂 Arquivos SQL do Projeto</h3>
+                    <button id="btn-refresh-files" class="btn-icon" title="Atualizar lista">🔄</button>
+                </div>
+                <div class="card-body">
+                    <select id="file-select" class="form-control">
+                        <option value="">Carregando arquivos...</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Dynamic Parameters Card -->
+            <div class="card params-card">
+                <div class="card-header">
+                    <h3>⚙️ Parâmetros da Consulta</h3>
+                </div>
+                <div class="card-body" id="params-container">
+                    <p class="text-muted small">Carregue ou digite um SQL com variáveis ($var ou :var) para definir os parâmetros.</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace Area -->
+        <main class="main-content">
+            <!-- Header Bar -->
+            <header class="top-bar">
+                <div class="active-file-info">
+                    <span class="file-icon">📄</span>
+                    <span id="current-filename">Selecione ou Cole uma Consulta SQL</span>
+                </div>
+                <div class="action-buttons">
+                    <button id="btn-open-new-tab" class="btn btn-secondary">
+                        <span class="btn-icon">↗️</span> Abrir em Nova Página
+                    </button>
+                    <button id="btn-run-sql" class="btn btn-primary">
+                        <span class="btn-icon">▶</span> Executar SQL
+                    </button>
+                </div>
+            </header>
+
+
+            <!-- Quick Snippets / Query Blocks Bar -->
+            <div id="snippets-bar" class="snippets-bar hidden">
+                <span class="snippets-label">Blocos SQL Detectados:</span>
+                <div id="snippets-list" class="snippets-chips"></div>
+            </div>
+
+            <!-- Documentation Card for Selected Block / Text -->
+            <div id="section-doc-card" class="section-doc-card hidden">
+                <div class="doc-card-header">
+                    <span class="doc-icon">💡</span>
+                    <strong id="doc-card-title">Descrição e Documentação do Bloco</strong>
+                </div>
+                <div id="doc-card-desc" class="doc-card-body"></div>
+            </div>
+
+            <!-- Code Editor Section -->
+            <section class="editor-section">
+                <div class="editor-header">
+                    <span class="editor-title">Editor de Código SQL</span>
+                    <div class="editor-tools">
+                        <span id="line-counter-badge" class="line-badge">Linhas: 1</span>
+                        <button id="btn-format-sql" class="btn-sm btn-ghost">Limpar Seleção</button>
+                        <button id="btn-copy-sql" class="btn-sm btn-ghost">Copiar SQL</button>
+                    </div>
+                </div>
+                <div class="editor-wrapper">
+                    <div id="line-numbers" class="line-numbers">1</div>
+                    <textarea id="sql-editor" spellcheck="false" placeholder="Digite ou cole aqui sua consulta SQL para o banco do Autosystem..."></textarea>
+                </div>
+            </section>
+
+            <!-- Execution Status & Validation Banner -->
+            <section id="status-section" class="status-section hidden">
+                <div class="status-metrics">
+                    <div class="metric-item">
+                        <span class="metric-label">Status</span>
+                        <span id="exec-status" class="metric-value text-success">Sucesso</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Registros</span>
+                        <span id="exec-rows" class="metric-value">0</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Tempo de Resposta</span>
+                        <span id="exec-time" class="metric-value">0 ms</span>
+                    </div>
+                </div>
+
+                <!-- Validation Alerts Box -->
+                <div id="validation-alerts" class="validation-alerts"></div>
+            </section>
+
+            <!-- Error Box -->
+            <div id="error-box" class="error-box hidden">
+                <h4>❌ Erro na Execução do PostgreSQL</h4>
+                <pre id="error-text"></pre>
+            </div>
+
+            <!-- Results Section -->
+            <section class="results-section">
+                <div class="results-header">
+                    <h3>📊 Resultados da Consulta</h3>
+                    <div class="results-actions">
+                        <input type="text" id="table-search" class="search-input" placeholder="🔍 Filtrar resultados na tabela...">
+                        <button id="btn-export-csv" class="btn-sm btn-secondary" disabled>📥 Exportar CSV</button>
+                        <button id="btn-export-json" class="btn-sm btn-secondary" disabled>📄 Exportar JSON</button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table id="results-table">
+                        <thead>
+                            <tr id="table-head">
+                                <th>Aguardando execução da consulta...</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-body">
+                            <tr>
+                                <td class="text-center text-muted">Selecione uma consulta no menu lateral e clique em <strong>Executar SQL</strong>.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/script.js?v={{ range(1, 100000) | random }}"></script>
+
+</body>
+</html>

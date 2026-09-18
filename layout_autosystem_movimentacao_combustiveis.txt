@@ -1,0 +1,163 @@
+================================================================================
+AUTOSYSTEM - MOVIMENTAÇÃO DE COMBUSTÍVEIS (LMC / ESTOQUE DE PISTA - POR PERÍODO)
+================================================================================
+
+1. CONSULTA SQL (Aba Origem dos dados SQL):
+--------------------------------------------------------------------------------
+WITH medicao_inicial_sub AS (
+    -- Busca a última medição física ('M') por depósito registrada ANTES do início do período ($dt_periodo_ini)
+    SELECT DISTINCT ON (l.deposito)
+        l.deposito,
+        l.produto,
+        l.quantidade AS volume_inicio
+    FROM lancto l
+    WHERE l.empresa = $empresa
+      AND l.operacao = 'M'
+      AND l.data < $dt_periodo_ini
+    ORDER BY l.deposito, l.data DESC, l.turno DESC, l.hora DESC
+),
+estoque_inicial AS (
+    -- Consolida a Litragem Inicial por combustível (soma das medições/estoque inicial dos tanques)
+    SELECT 
+        p.grid AS produto,
+        SUM(
+            COALESCE(
+                mi.volume_inicio,
+                produto_estoque_f($empresa::bigint, d.grid, p.grid, $dt_periodo_ini::date, 1, NULL),
+                0
+            )
+        ) AS volume_inicio
+    FROM produto p
+    JOIN grupo_produto gp ON p.grupo = gp.grid
+    JOIN deposito d ON d.empresa = $empresa AND d.produto = p.grid AND d.flag = 'A'
+    LEFT JOIN medicao_inicial_sub mi ON mi.deposito = d.grid
+    WHERE UPPER(gp.nome) = 'COMBUSTIVEL'
+      AND p.controlar_estoque = true
+    GROUP BY p.grid
+),
+movimentos_periodo AS (
+    -- Movimentações no período ($dt_periodo_ini a $dt_periodo_fim) utilizando as operações nativas do Autosystem
+    SELECT 
+        l.produto,
+        -- Somatório de todas as Entradas (Operações nativas do Autosystem: E, S, TE, DC, O)
+        SUM(CASE WHEN l.operacao IN ('E', 'S', 'TE', 'DC', 'O') THEN l.quantidade ELSE 0 END) AS entrada,
+        -- Total do Saída Bombas / Venda (Operações nativas do Autosystem: V, C, P, DF, TS, B)
+        SUM(CASE WHEN l.operacao IN ('V', 'C', 'P', 'DF', 'TS', 'B') THEN l.quantidade ELSE 0 END) AS venda,
+        -- Somatório de Aferição
+        SUM(CASE WHEN l.operacao = 'A' THEN l.quantidade ELSE 0 END) AS afericao,
+        -- Outras movimentações de estoque
+        SUM(CASE WHEN l.operacao IN ('T', 'D') THEN l.quantidade ELSE 0 END) AS outros
+    FROM lancto l
+    WHERE l.empresa = $empresa
+      AND l.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
+    GROUP BY l.produto
+),
+medicao_final_sub AS (
+    -- Busca a última medição física ('M') por depósito registrada até a data final do período ($dt_periodo_fim)
+    SELECT DISTINCT ON (l.deposito)
+        l.deposito,
+        l.produto,
+        l.quantidade AS volume_medicao
+    FROM lancto l
+    WHERE l.empresa = $empresa
+      AND l.operacao = 'M'
+      AND l.data <= $dt_periodo_fim
+    ORDER BY l.deposito, l.data DESC, l.turno DESC, l.hora DESC
+),
+medicao_periodo AS (
+    -- Consolida a última medição física registrada por combustível (soma dos tanques)
+    SELECT 
+        p.grid AS produto,
+        SUM(COALESCE(mf.volume_medicao, 0)) AS volume_medicao
+    FROM produto p
+    JOIN grupo_produto gp ON p.grupo = gp.grid
+    JOIN deposito d ON d.empresa = $empresa AND d.produto = p.grid AND d.flag = 'A'
+    LEFT JOIN medicao_final_sub mf ON mf.deposito = d.grid
+    WHERE UPPER(gp.nome) = 'COMBUSTIVEL'
+      AND p.controlar_estoque = true
+    GROUP BY p.grid
+),
+dados_consolidados AS (
+    SELECT 
+        p.codigo AS codigo_produto,
+        p.nome AS produto,
+        COALESCE(ei.volume_inicio, 0) AS inicio,
+        COALESCE(mp.entrada, 0) AS entrada,
+        COALESCE(mp.venda, 0) AS venda,
+        COALESCE(mp.afericao, 0) AS afericao,
+        COALESCE(mp.outros, 0) AS outros,
+        -- Final = somatório do início + entradas - vendas
+        (COALESCE(ei.volume_inicio, 0) + 
+         COALESCE(mp.entrada, 0) - 
+         COALESCE(mp.venda, 0)) AS final,
+        COALESCE(med.volume_medicao, 0) AS medicao,
+        -- Diferença = última medição registrada - final
+        (COALESCE(med.volume_medicao, 0) - 
+         (COALESCE(ei.volume_inicio, 0) + 
+          COALESCE(mp.entrada, 0) - 
+          COALESCE(mp.venda, 0))) AS diferenca
+    FROM produto p
+    JOIN grupo_produto gp ON p.grupo = gp.grid
+    LEFT JOIN estoque_inicial ei ON ei.produto = p.grid
+    LEFT JOIN movimentos_periodo mp ON mp.produto = p.grid
+    LEFT JOIN medicao_periodo med ON med.produto = p.grid
+    WHERE UPPER(gp.nome) = 'COMBUSTIVEL'
+      AND p.controlar_estoque = true
+)
+SELECT 
+    produto,
+    inicio,
+    entrada,
+    venda,
+    afericao,
+    outros,
+    final,
+    medicao,
+    diferenca
+FROM dados_consolidados
+WHERE inicio <> 0 
+   OR entrada <> 0 
+   OR venda <> 0 
+   OR afericao <> 0 
+   OR outros <> 0 
+   OR medicao <> 0 
+   OR final <> 0
+ORDER BY produto;
+
+
+2. ABA "CAMPOS":
+--------------------------------------------------------------------------------
+1   rel_posto_nome     tam=60           
+2   rel_data_hora      tam=18           
+3   produto            tam=24           
+4   inicio             tam=12  fmt=%.02f
+5   entrada            tam=12  fmt=%.02f
+6   venda              tam=12  fmt=%.03f
+7   afericao           tam=10  fmt=%.02f
+8   outros             tam=10  fmt=%.02f
+9   final              tam=12  fmt=%.02f
+10  medicao            tam=10  fmt=%.02f
+11  diferenca          tam=12  fmt=%.02f
+
+
+3. ABA "LAYOUT":
+--------------------------------------------------------------------------------
+<cab_pagina>
+#1                                                                                          #2
+--------------------------------------------------------------------------------------------------------------------
+
+                                      MOVIMENTAÇÃO DE COMBUSTÍVEIS
+
++------------------------+------------+------------+------------+----------+----------+------------+----------+------------+
+|        Produto         |   Inicio   |  Entrada   |   Venda    | Aferição |  Outros  |   Final    | Medição  | Diferença  |
++------------------------+------------+------------+------------+----------+----------+------------+----------+------------+
+</cab_pagina>
+<detalhe>
+|#                       |#           |#           |#           |#         |#         |#           |#         |#           |
+</detalhe>
+<rod_relat>
++------------------------+------------+------------+------------+----------+----------+------------+----------+------------+
+</rod_relat>
+<rod_pagina>
++------------------------+------------+------------+------------+----------+----------+------------+----------+------------+
+*Outros - (Transferencia entrada/Transferencia saida/Devolucao cliente/Devolucao fornecedor/Consumo)
