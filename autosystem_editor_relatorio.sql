@@ -222,34 +222,20 @@ ORDER BY total_venda DESC;
 
 
 -- ------------------------------------------------------------------------------
--- OPÇÃO F: SANGRIA DE CAIXA (BUSCA EM SANGRIA E MOVTO)
+-- OPÇÃO F: SANGRIA DE CAIXA (BUSCA EM MOVTO - PADRÃO OFICIAL AUTOSYSTEM)
 -- ------------------------------------------------------------------------------
 SELECT 
-    c.data AS data_caixa,
-    COALESCE(c.turno, 1) AS turno,
-    s.hora,
-    s.valor,
-    COALESCE(s.obs, 'SANGRIA DE CAIXA') AS obs
-FROM sangria s
-JOIN caixa c ON s.caixa = c.grid
-WHERE c.empresa = $empresa
-  AND c.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
-
-UNION ALL
-
-SELECT 
     m.data AS data_caixa,
-    1 AS turno,
+    COALESCE(m.turno, 1) AS turno,
     m.hora,
     m.valor,
-    COALESCE(m.obs, mm.nome) AS obs
+    COALESCE(NULLIF(TRIM(m.obs), ''), mm.nome) AS obs
 FROM movto m
 JOIN motivo_movto mm ON m.motivo = mm.grid
 WHERE m.empresa = $empresa
   AND m.data BETWEEN $dt_periodo_ini AND $dt_periodo_fim
   AND UPPER(mm.nome) LIKE '%SANGRIA%'
-
-ORDER BY hora;
+ORDER BY m.data, m.turno, m.hora;
 
 
 

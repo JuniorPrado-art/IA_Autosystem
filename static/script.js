@@ -176,6 +176,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnRefreshFiles.addEventListener('click', loadFiles);
 
+    const btnLoadIbsCbs = document.getElementById('btn-load-ibs-cbs');
+    if (btnLoadIbsCbs) {
+        btnLoadIbsCbs.addEventListener('click', async () => {
+            const targetFile = 'analise_correcao_produto_ibs_cbs.sql';
+            await loadFiles();
+            for (let i = 0; i < fileSelect.options.length; i++) {
+                if (fileSelect.options[i].value.includes(targetFile)) {
+                    fileSelect.selectedIndex = i;
+                    break;
+                }
+            }
+            fileSelect.value = targetFile;
+            fileSelect.dispatchEvent(new Event('change'));
+        });
+    }
+
     fileSelect.addEventListener('change', async () => {
         const selectedPath = fileSelect.value;
         if (!selectedPath) return;
@@ -322,10 +338,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 params = fullData.params || [];
             }
 
-            // Se mesmo assim não detectar parâmetros por conta de formatação, garantir os parâmetros padrão do Autosystem
+            // Se mesmo assim não detectar parâmetros por conta de formatação, garantir os parâmetros padrão apenas se houver $empresa na query
             if (params.length === 0) {
-                const combined = (sqlText + ' ' + (sqlEditor ? sqlEditor.value : '')).toLowerCase();
-                if (combined.includes('empresa') || combined.includes('movto') || combined.includes('data')) {
+                const combined = (sqlText || '').toLowerCase();
+                if (combined.includes('$empresa') || combined.includes(':empresa')) {
                     params = ['empresa', 'dt_periodo_ini', 'dt_periodo_fim'];
                 }
             }
@@ -446,6 +462,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!sqlText) {
             alert('Por favor, informe ou selecione uma consulta SQL.');
             return;
+        }
+
+        // Verificar se é comando de gravação (INSERT, UPDATE, DELETE) e solicitar confirmação
+        const isWriteCommand = /^\s*(?:INSERT|UPDATE|DELETE)\b/im.test(sqlText);
+        if (isWriteCommand) {
+            const confirmed = confirm(
+                '⚠️ ATENÇÃO: Este comando realiza uma gravação no banco de dados (INSERT / UPDATE / DELETE).\n\n' +
+                'Deseja confirmar a execução e gravar as alterações no PostgreSQL?'
+            );
+            if (!confirmed) {
+                return;
+            }
         }
 
         // Coletar parâmetros atuais dos inputs e selects

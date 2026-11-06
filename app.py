@@ -140,7 +140,7 @@ def parse_sql_file_sections(text):
     """
     Separa o texto do arquivo em seções contendo título, descrição explicativa e código SQL completo.
     """
-    pattern = r'(?is)((?:WITH\b[\s\S]*?)?SELECT\b[\s\S]*?;|INSERT\b[\s\S]*?;|UPDATE\b[\s\S]*?;|DELETE\b[\s\S]*?;)'
+    pattern = r'(?ims)(^[ \t]*(?:WITH\b|SELECT\b|INSERT\b|UPDATE\b|DELETE\b)[\s\S]*?;)'
     matches = list(re.finditer(pattern, text))
     sections = []
     
@@ -157,20 +157,32 @@ def parse_sql_file_sections(text):
         if sql_code.lower().startswith('sql\n') or sql_code.lower().startswith('sql\r\n'):
             sql_code = sql_code[3:].strip()
             
-        title = f"Consulta SQL #{len(sections) + 1}"
+        title = None
         desc_lines = []
         
-        for line in preceding_text.split('\n'):
+        # Se houver múltiplos blocos de comentários separados por linha em branco, pegar o último bloco mais próximo da query
+        paragraphs = re.split(r'\n\s*\n', preceding_text)
+        relevant_block = paragraphs[-1] if paragraphs else preceding_text
+
+        for line in relevant_block.split('\n'):
             line_str = line.strip()
             if not line_str or line_str.startswith('```') or line_str.lower() == 'sql':
                 continue
-            if any(emoji in line_str for emoji in ['🟢', '🟣', '📌', '🔑', '🔹']) or line_str.startswith('#') or line_str.startswith('--'):
-                clean_title = re.sub(r'^[🟢🟣📌🔑🔹#\-\s]+', '', line_str).strip()
-                if clean_title and len(clean_title) > 3:
-                    title = clean_title
+            if line_str.startswith('/*') or line_str.startswith('*/') or line_str.startswith('*'):
+                continue
+
+            clean_line = re.sub(r'^[🟢🟣📌🔑🔹#\-\=\s]+', '', line_str).strip()
+            if not clean_line or len(clean_line) <= 2:
+                continue
+
+            if title is None:
+                title = clean_line
             else:
-                desc_lines.append(line_str)
+                desc_lines.append(clean_line)
                 
+        if not title:
+            title = f"Consulta SQL #{len(sections) + 1}"
+            
         description = '\n'.join(desc_lines).strip()
         
         sections.append({
@@ -319,6 +331,11 @@ def execute_sql():
         
         # Executa a instrução SQL
         cur.execute(processed_sql)
+        affected_rows = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+        
+        is_write_op = bool(re.search(r'(?im)^[ \t]*(?:INSERT|UPDATE|DELETE)\b', processed_sql))
+        if is_write_op:
+            conn.commit()
         
         rows = []
         columns = []
@@ -340,6 +357,12 @@ def execute_sql():
                     else:
                         row_dict[col] = str(val)
                 rows.append(row_dict)
+        elif is_write_op:
+            columns = ["status_operacao", "registros_afetados"]
+            rows = [{
+                "status_operacao": "Comando gravado com sucesso (COMMIT realizado)",
+                "registros_afetados": affected_rows
+            }]
                 
         elapsed_time = round((time.time() - start_time) * 1000, 2) # em milissegundos
         
@@ -347,13 +370,15 @@ def execute_sql():
         conn.close()
         
         # Análise e Validação dos Resultados
-        validation_info = analyze_results(rows, columns, raw_sql)
+        validation_info = analyze_results(rows, columns, processed_sql, is_write_op=is_write_op, affected_rows=affected_rows)
         
         return jsonify({
             "success": True,
             "columns": columns,
             "rows": rows,
-            "row_count": len(rows),
+            "row_count": len(rows) if not is_write_op or cur.description else affected_rows,
+            "affected_rows": affected_rows,
+            "is_write_op": is_write_op,
             "execution_time_ms": elapsed_time,
             "processed_sql": processed_sql,
             "validation": validation_info
@@ -368,18 +393,33 @@ def execute_sql():
             "processed_sql": processed_sql
         })
 
-def analyze_results(rows, columns, raw_sql):
+def analyze_results(rows, columns, raw_sql, is_write_op=False, affected_rows=0):
     """
     Gera validações automáticas sobre os resultados obtidos.
     """
     alerts = []
     summary = {}
     
+    if is_write_op:
+        if affected_rows > 0:
+            alerts.append({
+                "type": "info",
+                "title": "Gravação Concluída com Sucesso (COMMIT)",
+                "message": f"Foram inseridos/atualizados {affected_rows} registro(s) no banco de dados PostgreSQL."
+            })
+        else:
+            alerts.append({
+                "type": "info",
+                "title": "Nenhuma Alteração Necessária (0 registros inseridos)",
+                "message": "O comando executou com sucesso, porém todos os registros já atendiam à condição (WHERE NOT EXISTS evitou duplicidades)."
+            })
+            return {"alerts": alerts, "summary": summary}
+
     if not rows:
         alerts.append({
             "type": "warning",
             "title": "Nenhum registro retornado",
-            "message": "A consulta executou com sucesso, mas a busca não retornou dados para os parâmetros informados."
+            "message": "A consulta executou com sucesso, mas a busca não retornou dados (ou não há pendências para o filtro consultado)."
         })
         return {"alerts": alerts, "summary": summary}
 
